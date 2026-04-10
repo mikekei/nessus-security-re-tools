@@ -95,121 +95,343 @@ nbin-decompile <path> 2>/dev/null
 
 ---
 
-## Step 2 — locate the plugin body
+## Step 2 — split the output into three regions
 
-The output always has this structure:
+Every decompiled nbin has exactly this layout:
 
 ```
 // === MAIN CODE ===
-<shared library preamble>     ← global_settings init, v4=0, v5=1, hundreds of lines
-if (v0 != 0) {                ← description block guard
-  script_id(NNNNN);
+
+[PREAMBLE]          ← hundreds of assignments: v4=0, v5=1, v6="string", ...
+                       ends just before the description guard
+
+if (v0 != 0) {      ← description block guard (v0 is always the description flag)
+  script_id(...);
   ...
-  exit(0);                    ← description block ends here
+  exit(0);          ← last line of description block
 }
-<plugin logic>                ← THIS is what matters
-...
-function func_0xHHHH() { ... } ← helper functions
+
+[PLUGIN LOGIC]      ← the actual plugin code; starts on the line after exit(0)
+
+function func_0x...() {   ← helper / library functions follow
+  ...
+}
 ```
 
-Find the `exit(0)` inside the description block and focus on everything after it.
+**Cut points:**
+1. Preamble ends at the line immediately before `if (v0 != 0) {`
+2. Description block = from `if (v0 != 0) {` through `exit(0);` (inclusive)
+3. Plugin logic = from the line after `exit(0);` through the last line before
+   the first `function func_0x` declaration
+4. Helper functions = everything from the first `function func_0x` to end of output
+
+Do this split before any rewriting. Work on each region in order: description →
+helpers → plugin logic.
 
 ---
 
 ## Step 3A — for `/nbin-disasm`
 
-After running the decompiler:
+After splitting:
 
-1. Extract the **description block** (between `if (v0 != 0) {` and `exit(0)`).
-2. Extract the **plugin logic** (from after `exit(0)` to the first function definition).
-3. Extract the **function definitions** (all `function func_0x...` blocks).
-4. Present these three sections clearly labeled.
-5. Then review the pseudocode and annotate:
-   - Resolve any `func_0xHHHH` whose body makes the purpose obvious (e.g., a one-liner that calls `script_tag` → label it `script_tag_wrapper`).
-   - Replace `__acc__` / `__ret__` / `__flag__` with more readable names where the data flow is clear.
-   - Add a one-line comment before each function explaining what it does.
-   - Flag any `builtin_0xNNN` that can be identified from context (see known map below).
+1. Present the **description block** with a `--- DESCRIPTION ---` header.
+2. Present the **plugin logic** with a `--- PLUGIN LOGIC ---` header.
+3. Present each **helper function** with a `--- FUNCTION func_0xHHHH ---` header.
+4. Annotate each section (do not rewrite — just add comments):
+   - One-line `# Purpose: ...` comment before each function explaining what it does.
+   - Replace `__acc__` / `__ret__` / `__flag__` with inline comments `/* return value */` etc.
+   - For each `func_0xHHHH` call site, add `# → <inferred purpose>` on the same line.
+   - For each `builtin_0xNNN`, look it up in the map below and add `# builtin_0xNNN = <name>`.
 
 ---
 
 ## Step 3B — for `/nbin-decompile`
 
-After running the decompiler and reading the pseudocode:
+Work through the five tasks below in order. Each task is independent — complete
+one fully before starting the next.
 
-Rewrite the output as clean, idiomatic NASL. Follow these rules:
+---
 
-### Description block
-Reconstruct as a proper `if (description)` block:
-```nasl
-if (description) {
-  script_id(NNNNN);
-  script_version("...");
-  script_name("...");
-  script_cve_id("CVE-XXXX-YYYY");
-  script_tag(name:"synopsis",     value:"...");
-  script_tag(name:"description",  value:"...");
-  script_tag(name:"see_also",     value:"...");
-  script_tag(name:"solution",     value:"...");
-  script_tag(name:"cvss_base",    value:"X.X");
-  script_tag(name:"cvss_base_vector", value:"CVSS2#...");
-  script_tag(name:"vuln_publication_date",   value:"YYYY/MM/DD");
-  script_tag(name:"plugin_publication_date", value:"YYYY/MM/DD");
-  script_tag(name:"cpe",          value:"cpe:/...");
-  script_tag(name:"plugin_type",  value:"...");
-  script_category(ACT_GATHER_INFO);
-  script_family("...");
-  script_copyright("...");
-  script_dependencies("...");
-  script_require_keys("...");
-  exit(0);
-}
+### Task 1 — Reconstruct the description block
+
+**How to do it efficiently:**
+
+The description block is fully recoverable verbatim because every value in it
+is a string or integer literal that survived compilation intact in the symbol table.
+
+1. Collect every call inside `if (v0 != 0) { ... exit(0); }`.
+2. Map each call to its canonical NASL form using this lookup:
+
+   | Pseudocode pattern | NASL |
+   |--------------------|------|
+   | `script_id(NNNNN)` | `script_id(NNNNN);` |
+   | `script_version("...")` | `script_version("...");` |
+   | `script_set_attribute(attribute:"synopsis", value:"...")` | `script_tag(name:"synopsis", value:"...");` |
+   | `script_set_attribute(attribute:"description", value:"...")` | `script_tag(name:"description", value:"...");` |
+   | `script_set_attribute(attribute:"solution", value:"...")` | `script_tag(name:"solution", value:"...");` |
+   | `script_set_attribute(attribute:"cvss_base", value:"...")` | `script_tag(name:"cvss_base", value:"...");` |
+   | `script_set_attribute(attribute:"see_also", value:"...")` | `script_tag(name:"see_also", value:"...");` |
+   | `script_set_attribute(attribute:"plugin_publication_date", value:"...")` | `script_tag(name:"plugin_publication_date", value:"...");` |
+   | `script_set_attribute(attribute:"plugin_modification_date", value:"...")` | `script_tag(name:"plugin_modification_date", value:"...");` |
+   | `script_cve_id("CVE-...")` | `script_cve_id("CVE-...");` |
+   | `script_category(N)` | Look up N: 0=ACT_ATTACK 3=ACT_GATHER_INFO 8=ACT_SETTINGS |
+   | `script_family("...")` | `script_family("...");` |
+   | `script_copyright("...")` | `script_copyright("...");` |
+   | `script_dependencies("a.nasl", "b.nasl")` | `script_dependencies("a.nasl", "b.nasl");` |
+   | `script_require_keys("Host/X")` | `script_require_keys("Host/X");` |
+   | `script_require_ports("Services/www", 80)` | `script_require_ports("Services/www", 80);` |
+   | `script_mandatory_keys("Host/X")` | `script_mandatory_keys("Host/X");` |
+   | `script_add_preference(name:"...", type:"...", value:"...")` | keep as-is |
+
+3. Any call in the description block whose name is `func_0xHHHH` — read its body.
+   It will be a thin wrapper (e.g., just calls `script_tag` with a fixed `name:`
+   arg). Inline the actual call directly; discard the wrapper.
+
+4. Output as:
+   ```nasl
+   if (description) {
+     script_id(NNNNN);
+     script_version("...");
+     ...
+     exit(0);
+   }
+   ```
+
+---
+
+### Task 2 — Rename variables
+
+**How to do it efficiently:**
+
+Do NOT scan the whole file first. Instead, build a rename table as you encounter
+each first assignment to a slot, then apply it everywhere. Use this decision tree:
+
+```
+For each assignment  vN = <expr>:
+
+  expr is get_kb_item("A/B/C")
+    → name = last path segment, snake_case: "Host/DuckDB/version" → "version"
+      if ambiguous (e.g. two vars both from "Host/*/version"), prefix: "duckdb_version"
+
+  expr is get_kb_list("A/B/*")
+    → name = plural of last non-wildcard segment: "Host/App/Installs/*" → "installs"
+
+  expr is ereg(pattern:"...", string:vM)  or  eregmatch(...)
+    → name = "match" or "ver_match" if the pattern looks like a version regex
+
+  expr is open_sock_tcp(port) or open_sock_udp(port)
+    → name = "sock" or "soc"
+
+  expr is recv(...) or recv_line(...)
+    → name = "res" or "banner"
+
+  expr is string(...) or strcat(...)  and later used in security_message(data:vN)
+    → name = "report"
+
+  expr is integer and vN is used only as a loop counter  (vN++; foreach or for)
+    → name = "i" (or "j" if nested)
+
+  expr is integer 0 or 1 and vN is used only as a flag
+    → name = "found" or "vuln"
+
+  vN is a function parameter (appears as arg in SLOT list before CALL)
+    → use the NASL named-arg key from the SLOT: SLOT(port:vN) → "port"
+
+  no clear context
+    → leave as vN
 ```
 
-### Function renaming
-Replace `func_0xHHHH` with a descriptive name derived from reading the function body:
-- Body only calls `script_tag(__acc__)` → rename to `script_tag_wrapper` (or just inline it)
-- Body calls `get_kb_item_or_exit` pattern → rename to `kb_require`
-- Body does a DB query → rename to `query_devices` or similar
-- Body reports a vuln → rename to `report_vuln`
-- If the function is a one-liner, inline it at the call site instead
+After building the table, do a single global substitution pass. Replace every
+occurrence of `vN` with its new name, including inside expressions and
+across all functions.
 
-### Builtin resolution
-Replace `builtin_0xNNN` with real function names using the map below.
-For unknowns, use the context (arguments, surrounding code) to infer the name
-and add a `# ?` comment.
+**Important:** `loc_26` in a function body is the function's first local slot.
+Apply the same decision tree to it using its usage within that function.
 
-### Variable renaming
-Replace `vN` slot names with descriptive names where the value is clear from context:
-- Assigned from `get_kb_item("some/key")` → name it `kb_val` or `some_key`
-- Loop iterator → `item`, `row`, `serial`, etc.
-- Counters → `i`, `count`, `n`
-- Report string being built up → `report`
-- Only rename when you are confident — leave `vN` otherwise
+---
 
-### Control flow cleanup
-- `while (__acc__ < __acc__)` artifacts → remove (decompiler artifact)
-- Deeply nested if-chains that are really a switch on a string → rewrite as
-  an array/list check: `if (model_name >< model_list)`
-- `if (__flag__) { // JZ → [N] }` with empty body → remove
-- Obvious `while(1)` loops that contain a single exit → rewrite as
-  `do { ... } while(FALSE)` or just flatten
+### Task 3 — Rename and inline `func_0xHHHH` functions
 
-### Accumulator cleanup
-- `__acc__` after a `CALL` is the return value — replace with the return variable
-  name that follows (the MOV after the CALL captures it)
-- `__ret__` → use the variable name it gets assigned to
-- `__flag__` → the boolean condition; replace with the actual comparison if visible
+**How to do it efficiently:**
+
+Process every function definition before touching call sites. For each
+`function func_0xHHHH() { ... }`:
+
+**Step A — classify the body:**
+
+```
+Body has only 1–2 statements and calls a well-known builtin
+  → inline candidate: replace every call site with the body, then delete the function
+
+Body calls security_message / security_hole / security_warning
+  → rename to report_<target>  (e.g. report_vuln, report_finding)
+    keep as function if called from >1 place, else inline
+
+Body calls get_kb_item + isnull check + exit
+  → rename to kb_require_<key_suffix>  (e.g. kb_require_version)
+
+Body calls set_kb_item for multiple keys
+  → rename to register_<subject>  (e.g. register_install)
+
+Body calls ssh / sshlib functions
+  → rename to ssh_<verb>  (e.g. ssh_run_cmd, ssh_connect)
+
+Body is a data-building loop (string += ..., report += ...)
+  → rename to build_<thing>  (e.g. build_report)
+
+Body contains ereg / eregmatch on a version string
+  → rename to check_version or parse_version
+
+Body calls exit(0) or exit(1) directly
+  → rename to exit_if_<condition>  (e.g. exit_if_not_affected)
+
+Body purpose unclear after reading
+  → leave as func_0xHHHH but add a # Purpose: ... comment above it
+```
+
+**Step B — update call sites:**
+
+For inlined functions: substitute the body at every call site, adjusting
+argument names. For renamed functions: do a global find-and-replace of the
+`func_0xHHHH` token.
+
+---
+
+### Task 4 — Resolve unresolved cross-plugin calls
+
+These appear as `func_0xHHHH(named_arg:"...", ...)` where the function is NOT
+defined anywhere in the current file — it comes from a loaded .nbin library.
+
+**Algorithm — use named args as the primary signal:**
+
+```
+Named arg keys reveal the function name or its purpose:
+
+  func_0xXXXX(attribute:"synopsis", value:"...")
+    → script_set_attribute(attribute:"synopsis", value:"...")
+      (any call with attribute: + value: is script_set_attribute)
+
+  func_0xXXXX(name:"Host/App/version", value:ver)
+    → set_kb_item(name:"Host/App/version", value:ver)
+      (name: + value: pattern with a KB-path string is set_kb_item)
+
+  func_0xXXXX("Host/App/version")     (single positional string arg, KB-path form)
+    → get_kb_item("Host/App/version")
+
+  func_0xXXXX(port:p, data:report)
+    → security_message(port:p, data:report)  or  log_message(port:p, data:report)
+      distinguish: if called after a vuln condition → security_message
+                   if informational → log_message
+
+  func_0xXXXX(cmd:str, session:sess)
+    → sshlib::run_command(cmd:str, session:sess)  (or similar sshlib call)
+
+  func_0xXXXX(string:str, pattern:"regex")
+    → ereg(string:str, pattern:"regex")  or  eregmatch(...)
+
+  func_0xXXXX(ver:v, fix:"1.2.3")
+    → ver_compare(ver:v, fix:"1.2.3")  or  vcf::check_version(...)
+
+  func_0xXXXX()   called with no args, return value used as port
+    → get_kb_item("Services/www")  or similar port-fetching call
+
+  func_0xXXXX(port:p)  return value used as a socket
+    → open_sock_tcp(p)
+
+  No named args, single arg, return value used in ereg/eregmatch
+    → get_kb_item(...)
+
+  No named args, result compared to NULL then exit
+    → get_kb_item_or_exit(...)  (or inline as: x = get_kb_item(...); if (isnull(x)) exit(0);)
+```
+
+If the call still cannot be identified after checking named args and return-value
+usage, emit it as-is but add a `# ? unresolved cross-plugin call` comment.
+
+---
+
+### Task 5 — Strip the preamble
+
+The preamble is the block of code from the top of `// === MAIN CODE ===` up to
+(but not including) `if (v0 != 0) {`. It consists entirely of:
+
+- Variable slot initializations: `v4 = 0; v5 = 1; v6 = "some_string";`
+- Object instantiations for shared libraries: `v42 = new sshlib::session();`
+- These are injected by the compiler from all `include("*.inc")` directives.
+  They are **not** plugin-specific logic.
+
+**Rule:** Delete the preamble entirely. Do not emit any of it.
+
+**Exception:** If any variable initialized in the preamble is referenced in the
+plugin logic AND the preamble init is the *only* place it is set (no later
+reassignment), carry the initialization forward as a `local_var` declaration at
+the top of the plugin body:
+
+```nasl
+# original preamble had: v99 = "Linux Kernel";
+local_var os_name;
+os_name = "Linux Kernel";
+```
+
+This is rare — almost all preamble variables are overwritten in plugin logic.
+When in doubt, omit.
+
+---
+
+### Accumulator and flag cleanup (applies across all tasks)
+
+Apply these substitutions mechanically before finalizing output:
+
+| Pattern | Replace with |
+|---------|-------------|
+| `__acc__` immediately after a CALL | the variable the next MOV assigns it to |
+| `vN = __acc__;` after a CALL | `vN = <function_call>(...)` (merge the two lines) |
+| `if (__flag__) {` | `if (<last_comparison_expression>) {` |
+| `if (!__flag__) {` | `if (!(<last_comparison_expression>)) {` |
+| `__ret__` | the variable name it is assigned to, or `result` |
+| `// slot: vN=val` comments before a CALL | merge into the call as named arg: `vN:val` → remove comment |
+| `if (__flag__) { // JZ → [N] }` with empty body | remove entirely |
+| `while (1 != 0) { ... }` containing only a single `break` path | flatten or rewrite as `do { ... } while(FALSE)` |
+
+---
+
+### Control flow cleanup (applies across all tasks)
+
+| Pattern | Rewrite |
+|---------|---------|
+| `while (__acc__ < __acc__)` | remove (decompiler artifact, never executes) |
+| Deeply nested `if` chain testing the same variable against many string literals | rewrite as `if (x == "a" \|\| x == "b" \|\| ...)` or a list check |
+| `if (isnull(x)) { exit(0); }` immediately after `x = get_kb_item(...)` | `x = get_kb_item_or_exit(...);` |
+| `if (cond) { ... } else { }` (empty else) | remove the else branch |
+| `for (vN = 0; vN < max_index(list); vN++)` with `vM = list[vN]` as first body line | `foreach vM (list)` |
+
+---
 
 ### Output format
 
 ```nasl
 ##
 # <filename>.nasl
-# <one-line description>
+# <one-line description of what the plugin detects or does>
 ##
 
 if (description) {
-  ...
+  script_id(NNNNN);
+  script_version("YYYY/MM/DD");
+  script_name("...");
+  script_cve_id("CVE-XXXX-YYYY");       # omit if none
+  script_tag(name:"synopsis",     value:"...");
+  script_tag(name:"description",  value:"...");
+  script_tag(name:"solution",     value:"...");
+  script_tag(name:"see_also",     value:"...");
+  script_tag(name:"cvss_base",    value:"X.X");
+  script_tag(name:"cvss_base_vector", value:"CVSS2#...");
+  script_tag(name:"plugin_publication_date", value:"YYYY/MM/DD");
+  script_category(ACT_GATHER_INFO);
+  script_family("...");
+  script_copyright("...");
+  script_dependencies("dep1.nasl", "dep2.nasl");
+  script_require_keys("Host/...");
   exit(0);
 }
 

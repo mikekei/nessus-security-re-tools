@@ -347,7 +347,7 @@ Identified by context (cross-referencing NASL source patterns):
   - Gap 0x21f–0x402 (484 entries): same — absent from static tables entirely
   - Full verified approach: RELA relocation parsing of registration table at ELF VMA 0xee2cc0 (nasl)
     / 0xf662a0 (nessusd), 168-byte entries, name ptr @ +0, index @ +8, null-terminated
-- [ ] Parse TLV 0x0c (function definition table) to map user function IDs to bytecode offsets — current impl is heuristic
+- [x] Parse TLV 0x0c (function definition table) to map user function IDs to bytecode offsets — replaced heuristic with marker-based scanner (func_id → qualified name)
 - [x] Build `nasl_decompiler.py` (nbin → readable NASL pseudocode)
 - [x] Reconstruct control flow (JZ/JNZ/CJMP → if/while/for)
 - [x] Reconstruct function boundaries from TLV 0x0c + FRAME_END positions
