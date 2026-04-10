@@ -1,0 +1,89 @@
+name: Publish to GitHub Releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Deny all permissions by default; each job grants only what it needs.
+permissions: read-all
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+
+  test:
+    name: Test on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install from wheel
+        run: pip install dist/*.whl
+
+      - name: Smoke test — imports
+        run: |
+          python -c "
+          from nbin_tools import NbinFile, NaslDecompiler, NaslVM, OPCODES, BUILTIN_NAMES
+          print('imports OK')
+          print(f'  {len(OPCODES)} opcodes, {len(BUILTIN_NAMES)} known builtins')
+          "
+
+      - name: Smoke test — CLI entry points exist
+        run: |
+          nbin-disasm    --help
+          nbin-decompile --help
+          nbin-vm        --help
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    permissions:
+      contents: write   # required to create releases and upload assets
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          files: dist/*
+          generate_release_notes: true

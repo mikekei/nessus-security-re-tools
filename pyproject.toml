@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nbin-tools"
+version = "0.1.0"
+description = "Nessus .nbin plugin decompiler — converts compiled NASL bytecode back to readable source"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["nessus", "nasl", "nbin", "decompiler", "reverse-engineering", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: Software Development :: Disassemblers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []   # pure Python, no runtime deps
+
+[project.scripts]
+nbin-disasm    = "nbin_tools.cli:disasm"
+nbin-decompile = "nbin_tools.cli:decompile"
+nbin-vm        = "nbin_tools.cli:vm"
+nbin-analyze   = "nbin_tools.analyze_opcodes:main"
+
+[project.urls]
+Homepage   = "https://github.com/mikekei/nessus-security-re-tools"
+Repository = "https://github.com/mikekei/nessus-security-re-tools"
+Issues     = "https://github.com/mikekei/nessus-security-re-tools/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nbin_tools*"]
+
+[tool.setuptools.package-data]
+nbin_tools = ["py.typed"]
