@@ -28,130 +28,576 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
     from nasl_vm import NbinFile, OPCODES, ADDR_MODES, VALUE_TYPES
 
-# ── Known builtin function ID → name mapping ──────────────────────────────────
-# Derived from analysis of gcp_settings.nbin and cross-referencing NASL patterns.
-# Format: func_id_index (= func_id & 0x0fffffff) → name
+# ── Builtin function ID → name mapping ────────────────────────────────────────
+# Ground truth: extracted from /opt/nessus/bin/nasl registration table at
+# ELF VMA 0x00ee2cc0 via RELA relocation parsing.  564 entries, 100% coverage.
+# Format: builtin_index (= func_id & 0x0fffffff) → name
 BUILTIN_NAMES = {
-    # ── Description-block metadata functions ────────────────────────────────
-    # Confirmed via empirical analysis of gcp_settings.nbin description block
-    0x01: "script_name",               # gets plugin name string
-    0x02: "script_version",            # gets version string
-    0x05: "script_copyright",          # gets copyright string
-    0x06: "script_summary",            # gets one-line summary text
-    0x07: "script_category",           # gets integer category (ACT_*)
-    0x08: "script_family",             # gets family string
-    0x09: "script_oid",                # OID string (old form)
-    0x0a: "script_dependencies",
-    0x0b: "script_require_keys",
-    0x0c: "script_require_ports",
-    0x0d: "script_exclude_keys",
-    0x0e: "script_require_udp_ports",
-    0x0f: "script_add_preference",
-    0x10: "script_get_preference",
-    0x11: "script_get_preference_file_content",
-    0x12: "script_mandatory_keys",     # uncertain; called in body with string args
-    0x13: "script_id",                 # gets integer script ID (e.g. 150079)
-    0x14: "script_version",            # alternate version call? (uncertain)
-    0x15: "script_cve_id",
-    0x16: "script_bugtraq_id",
-    0x17: "get_kb_item",               # confirmed: gets KB keys like 'cert', 'plugins_folder'
-    0x18: "script_xref",
-    0x19: "set_kb_item",               # confirmed: named args name:, value:
-    0x1a: "get_host_ip",
-    0x1b: "get_kb_item",               # confirmed: gets KB paths like 'DNS/invalid_hostname', 'global_settings/...'
-    0x1c: "open_sock_tcp",
-    0x1d: "open_sock_udp",
-    0x1e: "send",
-    0x1f: "recv",
-    0x20: "recv_line",
-    0x21: "close",
-    0x22: "get_port_state",
-    0x23: "get_udp_port_state",
-    0x24: "scanner_add_port",
-    0x25: "security_message",
-    0x26: "security_warning",
-    0x27: "security_note",
-    0x28: "security_hole",
-    0x29: "log_message",
-    0x2a: "display",
-    0x2b: "string",
-    0x2c: "strcat",
-    0x2d: "strlen",
-    0x2e: "substr",
-    0x2f: "chomp",
-    0x30: "ereg",
-    0x31: "ereg_replace",
-    0x32: "eregmatch",
-    0x33: "split",
-    0x34: "int",
-    0x35: "hex",
-    0x36: "hexstr",
-    0x37: "ord",
-    0x38: "chr",
-    0x39: "strtoul",
-    0x3a: "tolower",
-    0x3b: "toupper",
-    0x3c: "str_replace",
-    0x3d: "crap",
-    0x3e: "raw_string",
-    0x3f: "insstr",
-    0x40: "max_index",
-    0x41: "sort",
-    0x42: "keys",
-    0x43: "values",
-    0x44: "typeof",
-    0x45: "isnull",
-    0x46: "defined_func",
-    0x47: "make_array",
-    0x48: "make_list",
-    0x49: "list_uniq",
-    0x4a: "collib::new",
-    0x4b: "tcp_ping",
-    0x4c: "forge_ip_packet",
-    0x4d: "dump_ip_packet",
-    0x4e: "get_ip_element",
-    0x4f: "set_ip_elements",
-    0x50: "get_tcp_element",
-    0x51: "forge_tcp_packet",
-    0x52: "get_udp_element",
-    0x53: "forge_udp_packet",
-    0x54: "send_packet",
-    0x55: "pcap_next",
-    0x56: "dump_tcp_packet",
-    0x57: "display",
-    0x58: "exit",
-    0x59: "max_index",
-    0x5a: "keys",
-    0x5b: "chomp",
-    0x5c: "split",
-    0x5d: "ereg",
-    0x5e: "substr",
-    0x5f: "strlen",
-    0x60: "int",
-    0x61: "sort",
-    0x62: "tolower",
-    0x63: "toupper",
-    0x64: "str_replace",
-    0x65: "string",
-    0x66: "strcat",
-    0x67: "hexstr",
-    0x68: "hex",
-    0x69: "ord",
-    0x6a: "exit",                      # confirmed: called with 0 at end of description block
-    0x6b: "get_kb_list",
-    0x6c: "replace_kb_item",
-    0x6d: "rm_kb_item",
-    0x6e: "set_kb_item",               # single-arg form (uncertain; 0x19 is named-arg form)
-    0x6f: "defined_func",              # confirmed: gets function names like 'zlib_compress', 'SHA256'
-    0x70: "security_warning",
-    0x71: "security_note",
-    0x72: "security_hole",
-    0x73: "log_message",
-    0xa2: "ereg_replace",
-    0xee: "script_tag",
-    0xef: "script_end_attributes",     # confirmed: no-arg call after all script_tag calls
-    0x121: "ereg",
-    0x10a: "ereg_replace",
+    0x001: "script_name",
+    0x002: "script_version",
+    0x003: "script_timeout",
+    0x004: "script_description",
+    0x005: "script_copyright",
+    0x006: "script_summary",
+    0x007: "script_category",
+    0x008: "script_family",
+    0x009: "script_dependencie",
+    0x00a: "script_dependencies",
+    0x00b: "script_require_keys",
+    0x00c: "script_require_ports",
+    0x00d: "script_require_udp_ports",
+    0x00e: "script_exclude_keys",
+    0x00f: "script_add_preference",
+    0x010: "script_get_preference",
+    0x011: "script_get_preference_file_content",
+    0x012: "script_get_preference_file_location",
+    0x013: "script_id",
+    0x014: "script_cve_id",
+    0x015: "script_bugtraq_id",
+    0x016: "script_xref",
+    0x017: "get_preference",
+    0x018: "safe_checks",
+    0x019: "replace_kb_item",
+    0x01a: "set_kb_item",
+    0x01b: "get_kb_item",
+    0x01c: "get_kb_fresh_item",
+    0x01d: "get_kb_list",
+    0x01e: "security_warning",
+    0x01f: "security_note",
+    0x020: "security_hole",
+    0x021: "scanner_add_port",
+    0x022: "scanner_status",
+    0x023: "scanner_get_port",
+    0x024: "open_sock_tcp",
+    0x025: "open_sock_udp",
+    0x026: "open_priv_sock_tcp",
+    0x027: "open_priv_sock_udp",
+    0x028: "recv",
+    0x029: "recv_line",
+    0x02a: "send",
+    0x02b: "close",
+    0x02c: "join_multicast_group",
+    0x02d: "leave_multicast_group",
+    0x02e: "get_source_port",
+    0x02f: "cgibin",
+    0x030: "is_cgi_installed",
+    0x031: "http_open_socket",
+    0x032: "http_head",
+    0x033: "http_get",
+    0x034: "http_post",
+    0x035: "http_delete",
+    0x036: "http_put",
+    0x037: "http_close_socket",
+    0x038: "get_host_name",
+    0x039: "get_host_ip",
+    0x03a: "same_host",
+    0x03b: "get_host_open_port",
+    0x03c: "get_port_state",
+    0x03d: "get_tcp_port_state",
+    0x03e: "get_udp_port_state",
+    0x03f: "islocalhost",
+    0x040: "islocalnet",
+    0x041: "get_port_transport",
+    0x042: "this_host",
+    0x043: "this_host_name",
+    0x044: "string",
+    0x045: "raw_string",
+    0x046: "strcat",
+    0x047: "display",
+    0x048: "ord",
+    0x049: "hex",
+    0x04a: "hexstr",
+    0x04b: "strstr",
+    0x04c: "ereg",
+    0x04d: "ereg_replace",
+    0x04e: "egrep",
+    0x04f: "eregmatch",
+    0x050: "match",
+    0x051: "substr",
+    0x052: "insstr",
+    0x053: "tolower",
+    0x054: "toupper",
+    0x055: "crap",
+    0x056: "strlen",
+    0x057: "split",
+    0x058: "chomp",
+    0x059: "int",
+    0x05a: "stridx",
+    0x05b: "str_replace",
+    0x05c: "make_list",
+    0x05d: "make_array",
+    0x05e: "keys",
+    0x05f: "max_index",
+    0x060: "sort",
+    0x061: "unixtime",
+    0x062: "gettimeofday",
+    0x063: "localtime",
+    0x064: "mktime",
+    0x065: "open_sock_kdc",
+    0x066: "start_denial",
+    0x067: "end_denial",
+    0x068: "dump_ctxt",
+    0x069: "typeof",
+    0x06a: "exit",
+    0x06b: "rand",
+    0x06c: "usleep",
+    0x06d: "sleep",
+    0x06e: "isnull",
+    0x06f: "defined_func",
+    0x070: "forge_ip_packet",
+    0x071: "get_ip_element",
+    0x072: "set_ip_elements",
+    0x073: "insert_ip_options",
+    0x074: "dump_ip_packet",
+    0x075: "forge_tcp_packet",
+    0x076: "get_tcp_element",
+    0x077: "set_tcp_elements",
+    0x078: "dump_tcp_packet",
+    0x079: "tcp_ping",
+    0x07a: "forge_udp_packet",
+    0x07b: "get_udp_element",
+    0x07c: "set_udp_elements",
+    0x07d: "dump_udp_packet",
+    0x07e: "forge_icmp_packet",
+    0x07f: "get_icmp_element",
+    0x080: "forge_igmp_packet",
+    0x081: "send_packet",
+    0x082: "pcap_next",
+    0x083: "send_capture",
+    0x084: "MD2",
+    0x085: "MD4",
+    0x086: "MD5",
+    0x087: "SHA",
+    0x088: "SHA1",
+    0x089: "RIPEMD160",
+    0x08a: "HMAC_MD2",
+    0x08b: "HMAC_MD5",
+    0x08d: "HMAC_SHA1",
+    0x08f: "HMAC_RIPEMD160",
+    0x090: "dh_generate_key",
+    0x091: "bn_random",
+    0x092: "bn_cmp",
+    0x093: "dh_compute_key",
+    0x094: "rsa_public_decrypt",
+    0x095: "bf_cbc_encrypt",
+    0x096: "bf_cbc_decrypt",
+    0x097: "dsa_do_verify",
+    0x098: "pem_to_rsa",
+    0x099: "pem_to_dsa",
+    0x09a: "rsa_sign",
+    0x09b: "dsa_do_sign",
+    0x09c: "pread",
+    0x09d: "find_in_path",
+    0x09e: "fread",
+    0x09f: "fwrite",
+    0x0a0: "unlink",
+    0x0a1: "get_tmp_dir",
+    0x0a2: "file_stat",
+    0x0a3: "file_open",
+    0x0a4: "file_close",
+    0x0a5: "file_read",
+    0x0a6: "file_write",
+    0x0a7: "file_seek",
+    0x0ac: "prompt",
+    0x0ad: "get_local_mac_addrs",
+    0x0ae: "func_has_arg",
+    0x0af: "socket_get_error",
+    0x0b0: "big_endian",
+    0x0b1: "socket_ready",
+    0x0b2: "socket_negotiate_ssl",
+    0x0b3: "socket_pending",
+    0x0b4: "fill_list",
+    0x0b5: "zlib_compress",
+    0x0b6: "zlib_decompress",
+    0x0b7: "fork",
+    0x0b8: "bsd_byte_ordering",
+    0x0b9: "inject_packet",
+    0x0ba: "get_local_mac_addr",
+    0x0bb: "get_gw_mac_addr",
+    0x0bd: "prompt_password",
+    0x0be: "disable_all_plugins",
+    0x0bf: "enable_plugin_family",
+    0x0c0: "disable_plugin_family",
+    0x0c1: "enable_plugin_id",
+    0x0c2: "disable_plugin_id",
+    0x0c3: "nasl_str2intarray",
+    0x0c4: "rm_kb_item",
+    0x0c5: "get_host_raw_ip",
+    0x0c6: "this_host_raw",
+    0x0c7: "aes_cbc_encrypt",
+    0x0c8: "aes_cbc_decrypt",
+    0x0c9: "tripledes_cbc_encrypt",
+    0x0ca: "tripledes_cbc_decrypt",
+    0x0cb: "file_is_signed",
+    0x0cc: "bind_sock_tcp",
+    0x0cd: "bind_sock_udp",
+    0x0ce: "sock_accept",
+    0x0cf: "make_path",
+    0x0d0: "start_trace",
+    0x0d1: "stop_trace",
+    0x0d2: "rsa_public_encrypt",
+    0x0d3: "rsa_private_encrypt",
+    0x0d4: "rsa_private_decrypt",
+    0x0d5: "bn_dec2raw",
+    0x0d6: "bn_raw2dec",
+    0x0d7: "bn_hex2raw",
+    0x0d8: "bn_raw2hex",
+    0x0d9: "tcp_scan",
+    0x0da: "socketpair",
+    0x0db: "syn_scan",
+    0x0dc: "platform",
+    0x0dd: "xmlparse",
+    0x0de: "preg",
+    0x0df: "pgrep",
+    0x0e0: "pregmatch",
+    0x0e1: "udp_scan",
+    0x0e2: "preg_replace",
+    0x0e3: "get_global_kb_list",
+    0x0e4: "set_global_kb_item",
+    0x0e5: "get_global_kb_item",
+    0x0e6: "open_sock2",
+    0x0e7: "mutex_lock",
+    0x0e8: "mutex_unlock",
+    0x0e9: "uint",
+    0x0ea: "aes_ctr_encrypt",
+    0x0eb: "aes_ctr_decrypt",
+    0x0ec: "set_mem_limits",
+    0x0ed: "report_xml_tag",
+    0x0ee: "script_set_attribute",
+    0x0ef: "script_end_attributes",
+    0x0f0: "datalink",
+    0x0f1: "link_layer",
+    0x0f2: "sendto",
+    0x0f3: "recvfrom",
+    0x0f4: "bpf_open",
+    0x0f5: "bpf_close",
+    0x0f6: "bpf_next",
+    0x0f7: "bn_add",
+    0x0f8: "bn_sub",
+    0x0f9: "bn_mul",
+    0x0fa: "bn_sqr",
+    0x0fb: "bn_div",
+    0x0fc: "bn_mod",
+    0x0fd: "bn_nnmod",
+    0x0fe: "bn_mod_add",
+    0x0ff: "bn_mod_sub",
+    0x100: "bn_mod_mul",
+    0x101: "bn_mod_sqr",
+    0x102: "bn_exp",
+    0x103: "bn_mod_exp",
+    0x104: "bn_gcd",
+    0x105: "readdir",
+    0x106: "ssl_accept",
+    0x107: "resolv",
+    0x108: "open_sock_proxy",
+    0x109: "get_peer_name",
+    0x10a: "nessus_get_dir",
+    0x10b: "rename",
+    0x10c: "get_sock_name",
+    0x10d: "shutdown",
+    0x10f: "aes_cfb_encrypt",
+    0x110: "aes_cfb_decrypt",
+    0x111: "routethrough",
+    0x112: "socket_set_timeout",
+    0x113: "file_mtime",
+    0x114: "mkdir",
+    0x115: "rmdir",
+    0x116: "ssl_accept2",
+    0x117: "gzip_compress",
+    0x118: "deflate_compress",
+    0x11a: "wait",
+    0x11b: "getpid",
+    0x11c: "query_report",
+    0x11d: "can_query_report",
+    0x11e: "xslt_apply_stylesheet",
+    0x11f: "platform_ptr_size",
+    0x120: "kill",
+    0x121: "nasl_level",
+    0x122: "SHA224",
+    0x123: "SHA256",
+    0x124: "SHA512",
+    0x125: "HMAC_SHA224",
+    0x126: "HMAC_SHA256",
+    0x127: "HMAC_SHA512",
+    0x128: "query_scratchpad",
+    0x129: "ssl_accept3",
+    0x12a: "ssl_get_peer_name",
+    0x12b: "pem_to_rsa2",
+    0x12c: "pem_to_dsa2",
+    0x12d: "cfile_open",
+    0x12e: "file_fstat",
+    0x12f: "cfile_stat",
+    0x130: "mktime_tz",
+    0x131: "gettimezones",
+    0x132: "getlocaltimezone",
+    0x133: "report_error",
+    0x134: "security_low",
+    0x135: "security_critical",
+    0x136: "ipsort",
+    0x137: "numsort",
+    0x138: "bind_sock_tcp6",
+    0x139: "bind_sock_udp6",
+    0x13a: "security_report",
+    0x13b: "nasl_base64_decode",
+    0x13c: "nasl_base64_encode",
+    0x13d: "get_var",
+    0x13e: "set_var",
+    0x13f: "get_global_var",
+    0x140: "set_global_var",
+    0x141: "htmlparse",
+    0x143: "bzip2_compress",
+    0x144: "bzip2_decompress",
+    0x145: "db_open",
+    0x146: "db_close",
+    0x147: "db_query",
+    0x148: "db_query_foreach",
+    0x149: "jpeg_image",
+    0x14a: "buffer_pick",
+    0x14b: "security_report_with_attachments",
+    0x14f: "db_copy",
+    0x150: "load_db_master_key_cli",
+    0x151: "is_user_root",
+    0x152: "dump_interfaces",
+    0x153: "untar_plugins",
+    0x154: "mkcert",
+    0x155: "get_cert_dname",
+    0x156: "mkdir_ex",
+    0x157: "chmod",
+    0x158: "typeof_ex",
+    0x159: "new",
+    0x15a: "delete",
+    0x15b: "tickcount",
+    0x15c: "serialize",
+    0x15d: "deserialize",
+    0x15e: "socket_get_secure_renegotiation_support",
+    0x15f: "SHA384",
+    0x160: "HMAC_SHA384",
+    0x161: "insert_element",
+    0x162: "delete_element",
+    0x163: "fork_ex",
+    0x164: "abort",
+    0x165: "nasl_environment",
+    0x166: "equals",
+    0x167: "db_open2",
+    0x168: "close_handle",
+    0x169: "open_sock_ex",
+    0x16a: "socket_negotiate_ssl_ex",
+    0x16b: "mutex_get_info",
+    0x16c: "pem_to_pub_rsa",
+    0x16d: "ssl_validate",
+    0x16e: "db_passwd2key",
+    0x16f: "tar_files",
+    0x171: "stack_dump",
+    0x172: "gettime",
+    0x173: "event_add",
+    0x174: "event_remove",
+    0x177: "append_element",
+    0x178: "contains_element",
+    0x179: "format",
+    0x17a: "db_open_ex",
+    0x17b: "random",
+    0x17d: "ssl_get_error",
+    0x17e: "ssl_set_alpn_protocols",
+    0x17f: "ssl_get_alpn_protocol",
+    0x180: "trim",
+    0x181: "ssl_get_session_key",
+    0x182: "rules_validate_target",
+    0x183: "rules_validate_plugin",
+    0x184: "get_preference_file_content",
+    0x185: "get_fork_perf",
+    0x186: "sched_dump",
+    0x187: "inject_host",
+    0x188: "report_tag_internal",
+    0x189: "send_file",
+    0x18a: "recv_file",
+    0x18b: "is_sock_open",
+    0x18c: "file_stat_ex",
+    0x18d: "system_log_register",
+    0x18e: "system_log",
+    0x18f: "system_log_count",
+    0x190: "system_log_empty",
+    0x191: "get_host_fqdn",
+    0x192: "recv_until_boundary",
+    0x193: "db_dump",
+    0x194: "file_hash",
+    0x195: "rsa_generate",
+    0x196: "bn_mod_inverse",
+    0x197: "ecc_scalar_multiply",
+    0x198: "ecc_curve_details",
+    0x199: "crypto_hash",
+    0x19a: "crypto_mac",
+    0x19b: "crypto_encrypt",
+    0x19c: "crypto_decrypt",
+    0x19d: "crypto_verify_signature",
+    0x19e: "rsa_encrypt_ex",
+    0x19f: "rsa_decrypt_ex",
+    0x1a0: "is_type",
+    0x1a1: "length",
+    0x1a2: "contains_key",
+    0x1a3: "strjoin",
+    0x1a4: "capitalize",
+    0x1a5: "convert",
+    0x1a6: "merge_arrays",
+    0x1a7: "format_ex",
+    0x1a8: "metric_state",
+    0x1a9: "metric_event",
+    0x1aa: "query_inventory",
+    0x1ab: "code_coverage",
+    0x1ac: "encoding_identify",
+    0x1ad: "encoding_convert",
+    0x1af: "socket_negotiate_ssl2",
+    0x1b0: "crypto_random",
+    0x1b1: "encoding_convert_ex",
+    0x1b2: "db_query_transaction",
+    0x1b3: "tar_open",
+    0x1b4: "tar_next",
+    0x1b5: "tar_untar",
+    0x1b6: "tar_reset",
+    0x1b7: "exec_script",
+    0x1b8: "script_parent_id",
+    0x1b9: "script_context",
+    0x1ba: "script_get_children",
+    0x1bb: "function_override",
+    0x1bc: "engine_diag",
+    0x1bd: "file_exists",
+    0x1be: "winreg_deletevalue",
+    0x1bf: "get_proxy_for_url",
+    0x1c0: "file_is_signed_ex",
+    0x1c1: "function_name",
+    0x1f5: "xsd_validate",
+    0x1f6: "schematron_validate",
+    0x1f7: "xmldsig_verify",
+    0x1f8: "xmldsig_sign",
+    0x1f9: "xslt_filter",
+    0x1fa: "report_xml_tag2",
+    0x1fb: "get_local_ifaces",
+    0x1fc: "gzip_deflate_init",
+    0x1fd: "gzip_deflate",
+    0x1fe: "gzip_deflate_end",
+    0x1ff: "make_list2",
+    0x200: "localtime_tz",
+    0x201: "gzip_inflate_init",
+    0x202: "gzip_inflate",
+    0x203: "gzip_inflate_end",
+    0x204: "ssl_accept4",
+    0x205: "get_host_report_name",
+    0x206: "set_socket_option",
+    0x207: "get_socket_option",
+    0x208: "create_plugin_db",
+    0x20a: "recv_ex",
+    0x20b: "get_env_var",
+    0x20c: "ssl_accept5",
+    0x20d: "db_open3",
+    0x20e: "set_default_see_enc_mode",
+    0x211: "db_attach",
+    0x212: "db_detach",
+    0x213: "rsa_sign_ex",
+    0x214: "reverse_resolv",
+    0x215: "get_host_ip_ex",
+    0x216: "modify_element_shr",
+    0x217: "modify_element_cow",
+    0x218: "pread_ex",
+    0x219: "gzip_deflate_set_dictionary",
+    0x21a: "gzip_inflate_set_dictionary",
+    0x21b: "report_error_ex",
+    0x21c: "resummarize_plugin",
+    0x21d: "set_plugin_progress",
+    0x21e: "set_host_progress",
+    # ── Server/daemon-only builtins (0x403–0x45b) ──────────────────────────
+    0x403: "server_delete_user",
+    0x406: "server_feed_type",
+    0x407: "server_generate_token",
+    0x408: "server_validate_token",
+    0x409: "server_delete_token",
+    0x40a: "server_get_plugin_list",
+    0x40f: "server_scan_list",
+    0x410: "server_list_reports",
+    0x411: "server_report_get_host_list",
+    0x41a: "server_scan_ctrl",
+    0x41b: "server_report_delete",
+    0x41d: "server_restart",
+    0x41e: "server_import_nessus_file",
+    0x420: "server_get_load",
+    0x423: "server_user_exists",
+    0x426: "socket_redo_ssl_handshake",
+    0x427: "socket_reset_ssl",
+    0x42c: "server_get_status",
+    0x42d: "server_master_unlock",
+    0x432: "server_loading_progress",
+    0x433: "server_query_report",
+    0x439: "server_untar_plugins",
+    0x43a: "server_plugin_search_attributes",
+    0x43e: "server_report_has_audit_trail",
+    0x43f: "server_report_has_kb",
+    0x440: "server_report_regenerate",
+    0x441: "server_report_search_attributes",
+    0x445: "server_report_scan_errors",
+    0x446: "report_mk_filter",
+    0x44a: "server_set_global_preferences",
+    0x44f: "server_report_export",
+    0x450: "server_report_import",
+    0x453: "server_generate_dot_nessus",
+    0x455: "server_token_update",
+    0x456: "file_md5",
+    0x457: "server_launch_scan",
+    0x458: "server_insert_policy",
+    0x459: "server_set_dynamic_rules",
+    0x45a: "server_set_master_password",
+    0x45b: "server_needs_master_password",
+    # ── Windows agent builtins (0x7d0–0x80b) ──────────────────────────────
+    0x7d0: "winreg_openkey",
+    0x7d1: "winreg_queryinfokey",
+    0x7d2: "winreg_queryvalue",
+    0x7d3: "winreg_enumvalue",
+    0x7d4: "winreg_enumkey",
+    0x7d5: "winreg_getkeysecurity",
+    0x7d6: "winreg_createkey",
+    0x7d7: "winreg_setvalue",
+    0x7d8: "winfile_localpath",
+    0x7d9: "winfile_create",
+    0x7da: "winfile_read",
+    0x7db: "winfile_write",
+    0x7dc: "winfile_size",
+    0x7dd: "winfile_delete",
+    0x7de: "winfile_versioninfo",
+    0x7df: "winfile_versioninfo_ex",
+    0x7e0: "winfile_securityinfo",
+    0x7e1: "winfile_findfirst",
+    0x7e2: "winfile_findnext",
+    0x7e4: "winwmi_connectserver",
+    0x7e5: "winwmi_execquery",
+    0x7e6: "winwmi_getnextelement",
+    0x7e7: "winwmi_getobject",
+    0x7e8: "winwmi_spawninstance",
+    0x7e9: "winwmi_execmethod",
+    0x7ec: "winlsa_open_policy",
+    0x7ed: "winlsa_query_info",
+    0x7ee: "winlsa_query_domain_info",
+    0x7ef: "winlsa_lookup_sids",
+    0x7f0: "winlsa_lookup_names",
+    0x7f1: "winlsa_enumerate_accounts",
+    0x7f4: "winsvc_open_manager",
+    0x7f5: "winsvc_open",
+    0x7f6: "winsvc_enum_status",
+    0x7f7: "winsvc_control",
+    0x7f8: "winsvc_create",
+    0x7f9: "winsvc_start",
+    0x7fa: "winsvc_delete",
+    0x7fb: "winsvc_query_status",
+    0x7fc: "winsvc_get_displayname",
+    0x7fd: "winsvc_query_security",
+    0x800: "winnet_get_server_info",
+    0x801: "winnet_get_wksta_info",
+    0x802: "winnet_enum_sessions",
+    0x803: "winnet_enum_shares",
+    0x804: "winnet_enum_wksta_users",
+    0x805: "winnet_enum_servers",
+    0x806: "winnet_get_user_groups",
+    0x807: "winnet_get_user_local_groups",
+    0x808: "winnet_get_local_group_members",
+    0x809: "winnet_get_group_users",
+    0x80a: "winnet_get_user_info",
+    0x80b: "winnet_get_user_modals",
 }
 
 # CMP opcode → comparison operator string (from nasl_vm.py OPCODES)
@@ -347,41 +793,104 @@ class NaslDecompiler:
     # ── Block identification ───────────────────────────────────────────────────
 
     def _parse_func_table(self):
-        """Parse TLV 0x0c (class/method table) to map method slot IDs → names.
+        """Parse TLV 0x0c (function definition table) to extract two mappings:
 
-        TLV 0x0c structure (fixed 554-byte shared library):
-          [4BE: class_count] [4BE: total_methods] [4BE: ?]
-          Per class:
-            [2B: name_len][name bytes][NUL]
-            (header fields...)
-            Per method:
-              [1B: attr][1B: name_len][name][NUL]
-              [3B pad][4BE: ?][4BE: start_insn?][4BE: method_slot_id=0x00800NNN][...]
-        Method slot IDs 0x00800000..0x008000FF → _fid_to_name[slot_id] = name
+        1. func_id → qualified name  (plain user-function CALL dispatch path 3)
+           Format confirmed by Ghidra analysis of FUN_00257900 / FUN_00257750:
+             [4BE: count]
+             per entry:
+               [4B: 00 00 00 0d marker][4BE: func_id][2BE: name_len][name bytes]
+               followed by parameter sub-blocks (variable length)
+           Entries are found by scanning for the 00 00 00 0d marker with
+           sanity checks on func_id and name to reject false positives.
+
+        2. slot_id (0x00800000|n) → method name  (CALL dispatch path 2)
+           Slot IDs are embedded within parameter sub-blocks of each entry
+           (type-8 sub-blocks: [1B type=8][1B name_len][name bytes] per item;
+           type-3 sub-blocks carry slot IDs as [4BE slot_id] values).
+           These are mapped via a secondary backward-scan after the primary
+           marker-based pass so that method resolution remains correct even
+           when parameter sub-block layouts vary.
         """
         raw_0c = self.nb._raw_sections.get(0x0c, b'')
         if not raw_0c:
             return
 
-        # Walk the binary looking for 0x00800000-0x008000ff slot IDs
-        # Each method entry has [1B attr][1B namelen][name][NUL][...20 bytes...][4BE slot_id]
+        _VALID_NAME_CHARS = frozenset(
+            'abcdefghijklmnopqrstuvwxyz'
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            '0123456789_:.+@-'
+        )
+
+        n = len(raw_0c)
+        if n < 4:
+            return
+
+        count = struct.unpack('>I', raw_0c[0:4])[0]
+        # Sanity-cap count to avoid scanning forever on corrupt data
+        if count == 0 or count > 0x4000:
+            count = 0x4000
+
+        found = 0
+        i = 4
+        while i < n - 10 and found < count:
+            # Look for the per-entry marker: 00 00 00 0d
+            if raw_0c[i:i+4] != b'\x00\x00\x00\x0d':
+                i += 1
+                continue
+
+            if i + 10 > n:
+                break
+
+            func_id  = struct.unpack('>I', raw_0c[i+4:i+8])[0]
+            name_len = struct.unpack('>H', raw_0c[i+8:i+10])[0]
+
+            # Reject obviously invalid entries
+            if func_id == 0 or name_len < 2 or name_len > 128:
+                i += 1
+                continue
+            if i + 10 + name_len > n:
+                i += 1
+                continue
+
+            name_bytes = raw_0c[i+10:i+10+name_len]
+            try:
+                name = name_bytes.decode('ascii')
+            except (UnicodeDecodeError, ValueError):
+                i += 1
+                continue
+
+            if not all(c in _VALID_NAME_CHARS for c in name):
+                i += 1
+                continue
+
+            # Confirmed valid entry — record func_id → name
+            self._fid_to_name[func_id] = name
+            found += 1
+            # Advance past [marker(4)][func_id(4)][name_len(2)][name(name_len)]
+            i = i + 10 + name_len
+
+        # Secondary pass: pick up slot IDs (0x00800000|n) from sub-blocks.
+        # These appear as big-endian uint32 values anywhere in 0x0c data.
+        # We scan the whole section and do a backward name-scan for each hit.
         off = 0
-        while off + 4 <= len(raw_0c):
+        while off + 4 <= n:
             v = struct.unpack('>I', raw_0c[off:off+4])[0]
             if (v & 0xff800000) == 0x800000 and (v & 0x7fffff) < 256:
                 slot_id = v
-                # Look backward for the method name (null-terminated before these 4 bytes)
-                # The name appears ~20 bytes before the slot_id
-                name_end = off
-                while name_end > 0 and raw_0c[name_end-1] == 0:
-                    name_end -= 1
-                name_start = name_end
-                while name_start > 0 and 32 <= raw_0c[name_start-1] < 127:
-                    name_start -= 1
-                if name_end - name_start >= 2:
-                    name = raw_0c[name_start:name_end].decode('ascii', errors='replace')
-                    if name.replace('_', '').isalnum() or '::' in name:
-                        self._fid_to_name[slot_id] = name
+                if slot_id not in self._fid_to_name:
+                    # Scan backward past NUL padding for the preceding name
+                    name_end = off
+                    while name_end > 0 and raw_0c[name_end - 1] == 0:
+                        name_end -= 1
+                    name_start = name_end
+                    while name_start > 0 and 32 <= raw_0c[name_start - 1] < 127:
+                        name_start -= 1
+                    if name_end - name_start >= 3:
+                        candidate = raw_0c[name_start:name_end].decode('ascii', errors='replace')
+                        # Require qualified name (has '::') or long enough plain identifier
+                        if '::' in candidate or (candidate.replace('_', '').isalnum() and len(candidate) >= 5):
+                            self._fid_to_name[slot_id] = candidate
             off += 1
 
     def _identify_blocks(self):

@@ -338,8 +338,16 @@ Identified by context (cross-referencing NASL source patterns):
 - [x] Fix symbol table parser (format confirmed: [4BE key][2B type][4BE len][bytes])
 - [x] Verify jump formula (`target = N - operand`)
 - [x] Understand SLOT+CALL pattern for function calls
-- [ ] Identify builtin function IDs (0xf000xxxx → name mapping)
-- [ ] Parse TLV 0x0c (function definition table) to map user function IDs to bytecode offsets
-- [ ] Build `nasl_decompiler.py` (nbin → readable NASL pseudocode)
-- [ ] Reconstruct control flow (JZ/JNZ/CJMP → if/while/for)
-- [ ] Reconstruct function boundaries from TLV 0x0c + FRAME_END positions
+- [x] Identify builtin function IDs (0xf000xxxx → name mapping) — 564 builtins, 100% static coverage
+  - Gap 0x1c2–0x1f4 (51 entries): absent from static registration tables in both `nasl` and `nessusd`
+  - The gap integers appear coincidentally in an embedded LDAP schema table (RFC 2256 object classes:
+    rFC822localPart, dNSDomain, simpleSecurityObject, pilotOrganization, pilotDSA, etc.)
+  - These IDs are likely registered at runtime by a dynamically-loaded module (platform extension,
+    hostlevel_funcs, or sshlib agent component); plugins guard the calls gracefully (NULL return OK)
+  - Gap 0x21f–0x402 (484 entries): same — absent from static tables entirely
+  - Full verified approach: RELA relocation parsing of registration table at ELF VMA 0xee2cc0 (nasl)
+    / 0xf662a0 (nessusd), 168-byte entries, name ptr @ +0, index @ +8, null-terminated
+- [ ] Parse TLV 0x0c (function definition table) to map user function IDs to bytecode offsets — current impl is heuristic
+- [x] Build `nasl_decompiler.py` (nbin → readable NASL pseudocode)
+- [x] Reconstruct control flow (JZ/JNZ/CJMP → if/while/for)
+- [x] Reconstruct function boundaries from TLV 0x0c + FRAME_END positions
